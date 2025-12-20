@@ -90,30 +90,25 @@ public class ODataService {
             @ToolParam(description = "Фильтр OData (напр. ИНН eq '12345' или Number eq '001')") String filter,
             @ToolParam(description = "Лимит записей (по умолчанию 5)") Integer top
     ) {
-        log.info("Универсальный вызов: Сущность={}, Фильтр={}, Лимит={}", entity, filter, top);
-
+        // Определяем лимит
         int limit = (top != null) ? top : 5;
 
         return webClient.get()
                 .uri(uriBuilder -> {
-                    URI finalUri = uriBuilder.path(entity)
+                    uriBuilder.path(entity)
                             .queryParam("$top", limit)
-                            .queryParam("$format", "json")
-                            .build();
+                            .queryParam("$format", "json");
 
+                    // Добавляем фильтр только если он передан и не пуст
                     if (filter != null && !filter.isBlank()) {
-                        // Пересобираем с фильтром, если он есть
-                        finalUri = UriComponentsBuilder.fromUri(finalUri)
-                                .queryParam("$filter", filter)
-                                .build().toUri();
+                        uriBuilder.queryParam("$filter", filter);
                     }
 
-                    log.info(">>>> СФОРМИРОВАННЫЙ ЗАПРОС К 1С: {}", finalUri);
-                    return finalUri;
+                    return uriBuilder.build();
                 })
                 .retrieve()
-                .bodyToMono(new ParameterizedTypeReference<ODataResponse<Map<String, Object>>>() {
-                })
+                // Используем ParameterizedTypeReference для десериализации JSON в список Map
+                .bodyToMono(new ParameterizedTypeReference<ODataResponse<Map<String, Object>>>() {})
                 .map(ODataResponse::getValue)
                 .block();
     }
