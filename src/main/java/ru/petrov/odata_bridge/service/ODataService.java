@@ -8,19 +8,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.ExchangeFilterFunction;
 import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.util.UriComponentsBuilder;
 import reactor.core.publisher.Mono;
 import ru.petrov.odata_bridge.config.IndexingConfig;
+import ru.petrov.odata_bridge.config.ODataConfig;
 import ru.petrov.odata_bridge.model.FieldInfo;
 import ru.petrov.odata_bridge.model.ODataResponse;
-import ru.petrov.odata_bridge.model.catalog.Kontragent;
-import ru.petrov.odata_bridge.model.task.UserTask;
 
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamReader;
 import java.io.InputStream;
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -30,20 +27,21 @@ import java.util.Map;
 @Service
 public class ODataService {
     private final WebClient webClient;
-    private final IndexingConfig config;
+    private final IndexingConfig indexingConfig;
+
 
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ODataService.class);
 
-    public ODataService(IndexingConfig config) {
-        this.config = config;
-        String auth = config.baseUrl() + ":" + config.password();
+    public ODataService(IndexingConfig indexingConfig, ODataConfig oDataConfig) {
+        this.indexingConfig = indexingConfig;
+        String auth = oDataConfig.username() + ":" + oDataConfig.password();
         String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes(StandardCharsets.UTF_8));
         // Устанавливаем лимит, например, 50 МБ (50 * 1024 * 1024)
         ExchangeStrategies strategies = ExchangeStrategies.builder()
                 .codecs(codecs -> codecs.defaultCodecs().maxInMemorySize(50 * 1024 * 1024))
                 .build();
         this.webClient = WebClient.builder()
-                .baseUrl(config.baseUrl())
+                .baseUrl(oDataConfig.baseUrl())
                 .defaultHeader("Authorization", "Basic " + encodedAuth)
                 .exchangeStrategies(strategies) // Применяем стратегию
                 .filter(logRequest())
@@ -57,32 +55,32 @@ public class ODataService {
         });
     }
 
-    @Tool(description = "Получить топ контрагентов из базы 1С")
-    public List<Kontragent> fetchTopKontragents(
-            @ToolParam(description = "Количество записей для получения (по умолчанию 5)") Integer limit) {
-        int topValue = (limit != null) ? limit : 5;
-        log.info("Инструмент fetchTopKontragents вызван с лимитом: {}", topValue);
-
-        return webClient.get()
-                .uri("Catalog_Контрагенты?$top=5&$format=json")
-                .retrieve()
-                .bodyToMono(new ParameterizedTypeReference<ODataResponse<Kontragent>>() {
-                })
-                .map(ODataResponse::getValue)
-                .block(); // .block() допустим для простого MVP
-    }
-
-    @Tool(description = "Получить топ задач из базы 1С")
-    public List<UserTask> fetchTasks() {
-        log.info("Выполнение запроса к 1с для получения топа задач");
-        return webClient.get()
-                .uri("Task_ЗадачаИсполнителя?$top=10&$format=json")
-                .retrieve()
-                .bodyToMono(new ParameterizedTypeReference<ODataResponse<UserTask>>() {
-                })
-                .map(ODataResponse::getValue)
-                .block();
-    }
+//    @Tool(description = "Получить топ контрагентов из базы 1С")
+//    public List<Kontragent> fetchTopKontragents(
+//            @ToolParam(description = "Количество записей для получения (по умолчанию 5)") Integer limit) {
+//        int topValue = (limit != null) ? limit : 5;
+//        log.info("Инструмент fetchTopKontragents вызван с лимитом: {}", topValue);
+//
+//        return webClient.get()
+//                .uri("Catalog_Контрагенты?$top=5&$format=json")
+//                .retrieve()
+//                .bodyToMono(new ParameterizedTypeReference<ODataResponse<Kontragent>>() {
+//                })
+//                .map(ODataResponse::getValue)
+//                .block(); // .block() допустим для простого MVP
+//    }
+//
+//    @Tool(description = "Получить топ задач из базы 1С")
+//    public List<UserTask> fetchTasks() {
+//        log.info("Выполнение запроса к 1с для получения топа задач");
+//        return webClient.get()
+//                .uri("Task_ЗадачаИсполнителя?$top=10&$format=json")
+//                .retrieve()
+//                .bodyToMono(new ParameterizedTypeReference<ODataResponse<UserTask>>() {
+//                })
+//                .map(ODataResponse::getValue)
+//                .block();
+//    }
 
     @Tool(description = "Универсальный запрос к 1С. Параметры (entity, filter) нужно брать из базы знаний метаданных.")
     public List<Map<String, Object>> executeSmartQuery(
@@ -90,6 +88,9 @@ public class ODataService {
             @ToolParam(description = "Фильтр OData (напр. ИНН eq '12345' или Number eq '001')") String filter,
             @ToolParam(description = "Лимит записей (по умолчанию 5)") Integer top
     ) {
+
+        log.info("[AI TOOL CALL] Метод: executeSmartQuery | Сущность: {} | Фильтр: {} | Лимит: {}",
+                entity, filter, top);
         // Определяем лимит
         int limit = (top != null) ? top : 5;
 
@@ -149,27 +150,31 @@ public class ODataService {
                         // Нашли начало описания таблицы (например, Catalog_Контрагенты)
                         String entityName = reader.getAttributeValue(null, "Name");
 
-                        // 1. Фильтрация сущностей (например, Удалить...)
-                        boolean isExcluded = config.excludeEntities().stream()
-                                .anyMatch(entityName::contains);
+                        // 1. Фильтрация ТАБЛИЦ (Белый и Черный списки сущностей)
+                        boolean isExcluded = indexingConfig.excludeEntities().stream().anyMatch(entityName::contains);
+                        boolean isAllowed = indexingConfig.includeOnly() == null || indexingConfig.includeOnly().isEmpty() ||
+                                indexingConfig.includeOnly().stream().anyMatch(entityName::equals);
 
-                        currentEntity = isExcluded ? null : entityName;
+                        currentEntity = (isAllowed && !isExcluded) ? entityName : null;
+                        if (currentEntity != null) {
+                            // Создаем Мастер-запись для всей таблицы
+                            String humanName = currentEntity.replace("Catalog_", "Справочник ").replace("Document_", "Документ ");
+                            fields.add(new FieldInfo(currentEntity, "TABLE_HEADER", "System", "[СУЩНОСТЬ] " + humanName, true));
+                        }
 
                     } else if ("Property".equals(localName) && currentEntity != null) {
                         // Нашли поле внутри текущей таблицы
                         String fieldName = reader.getAttributeValue(null, "Name");
+                        String fieldType = reader.getAttributeValue(null, "Type");
 
                         // 2. Фильтрация конкретных полей (например, Ref_Key)
-                        if (config.excludeFields().contains(fieldName)) {
+                        if (indexingConfig.excludeFields().contains(fieldName)) {
                             continue;
                         }
-                        String fieldType = reader.getAttributeValue(null, "Type");
-                        String humanDescription = String.format("Реквизит '%s' объекта '%s'. Тип данных: %s.",
-                                fieldName,
-                                currentEntity.replace("Catalog_", "Справочник ").replace("Document_", "Документ "),
-                                fieldType.replace("Edm.", ""));
-
-                        fields.add(new FieldInfo(currentEntity, fieldName, fieldType, humanDescription));
+                        // Если таблица разрешена и поле не в черном списке — индексируем
+                        String cleanEntity = currentEntity.replace("Catalog_", "").replace("Document_", "");
+                        String fieldDesc = String.format("[ПОЛЕ] %s в таблице %s", fieldName, cleanEntity);
+                        fields.add(new FieldInfo(currentEntity, fieldName, fieldType, fieldDesc, false));
 
                     }
                 } else if (event == XMLStreamConstants.END_ELEMENT) {

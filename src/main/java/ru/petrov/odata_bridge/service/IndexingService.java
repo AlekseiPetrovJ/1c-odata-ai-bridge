@@ -79,17 +79,13 @@ public class IndexingService {
     }
 
     private Document toDocument(FieldInfo field) {
-        // Content — текст для генерации вектора (смысловой поиск)
-        String contentForVector = field.getDescription();
-
-        // Metadata — технический паспорт поля для формирования OData-запроса
         Map<String, Object> metadata = Map.of(
-                "entity", field.getEntity(),
-                "field", field.getName(),
-                "type", field.getType()
+                "entity", field.entity(),
+                "field", field.name(),
+                "type", field.type(),
+                "is_header", field.isHeader()
         );
-
-        return new Document(contentForVector, metadata);
+        return new Document(field.description(), metadata);
     }
 
     public String findRelevantMetadata(String userQuery) {

@@ -1,31 +1,16 @@
 package ru.petrov.odata_bridge.model;
-
-public class FieldInfo {
-    private final String entity;
-    private final String name;
-    private final String type;
-    private final String description;
-
-    public FieldInfo(String entity, String name, String type, String description) {
-        this.entity = entity;
-        this.name = name;
-        this.type = type;
-        this.description = description;
-    }
-
-    public String getEntity() {
-        return entity;
-    }
-
-    public String getName() {
-        return name;
-    }
-
-    public String getType() {
-        return type;
-    }
-
-    public String getDescription() {
-        return description;
-    }
-}
+/**
+ * Описание элемента метаданных 1С.
+ * @param entity    Техническое имя таблицы (напр. Catalog_Контрагенты)
+ * @param name      Техническое имя поля (напр. ИНН) или TABLE_HEADER для самой таблицы
+ * @param type      Тип данных OData
+ * @param description Человекочитаемое описание для векторного поиска
+ * @param isHeader  Признак: true — это описание таблицы, false — это описание поля
+ */
+public record FieldInfo(
+        String entity,
+        String name,
+        String type,
+        String description,
+        boolean isHeader
+) {}

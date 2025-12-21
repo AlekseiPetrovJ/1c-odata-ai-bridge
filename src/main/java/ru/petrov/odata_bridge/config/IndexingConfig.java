@@ -12,7 +12,5 @@ public record IndexingConfig(
         @DefaultValue("0.75") double similarityThreshold,
         List<String> excludeEntities,
         List<String> excludeFields,
-        String baseUrl,
-        String username,
-        String password
+        List<String> includeOnly // Добавляем белый список на период MVP
 ) {}
