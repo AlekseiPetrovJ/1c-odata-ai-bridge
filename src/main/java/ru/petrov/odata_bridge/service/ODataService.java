@@ -83,12 +83,13 @@ public class ODataService {
 //    }
 
     @Tool(description = "Универсальный запрос к 1С. Параметры (entity, filter) нужно брать из базы знаний метаданных.")
-    public List<Map<String, Object>> executeSmartQuery(
+    public Object executeSmartQuery(
             @ToolParam(description = "Имя сущности из метаданных (напр. Catalog_Контрагенты)") String entity,
             @ToolParam(description = "Фильтр OData (напр. ИНН eq '12345' или Number eq '001')") String filter,
-            @ToolParam(description = "Лимит записей (по умолчанию 5)") Integer top
+            @ToolParam(description = "Лимит записей (по умолчанию 5)") Integer top,
+            @ToolParam(description = "Вернуть только количество (число)") Boolean countOnly
     ) {
-
+        boolean isCount = Boolean.TRUE.equals(countOnly);
         log.info("[AI TOOL CALL] Метод: executeSmartQuery | Сущность: {} | Фильтр: {} | Лимит: {}",
                 entity, filter, top);
         // Определяем лимит
@@ -96,10 +97,13 @@ public class ODataService {
 
         return webClient.get()
                 .uri(uriBuilder -> {
-                    uriBuilder.path(entity)
-                            .queryParam("$top", limit)
-                            .queryParam("$format", "json");
-
+                    // Если счетчик — добавляем /$count к пути
+                    uriBuilder.path(isCount ? entity + "/$count" : entity);
+                    if (!isCount) {
+                        uriBuilder
+                                .queryParam("$top", limit)
+                                .queryParam("$format", "json");
+                    }
                     // Добавляем фильтр только если он передан и не пуст
                     if (filter != null && !filter.isBlank()) {
                         uriBuilder.queryParam("$filter", filter);
@@ -109,8 +113,17 @@ public class ODataService {
                 })
                 .retrieve()
                 // Используем ParameterizedTypeReference для десериализации JSON в список Map
-                .bodyToMono(new ParameterizedTypeReference<ODataResponse<Map<String, Object>>>() {})
-                .map(ODataResponse::getValue)
+                .bodyToMono(String.class) // Получаем СНАЧАЛА всё как строку (и JSON, и цифру)
+                .flatMap(body -> {
+                    if (isCount) {
+                        // Если это счетчик, просто возвращаем число
+                        return Mono.just(body);
+                    } else {
+                        // Если это JSON, парсим его вручную или через ObjectMapper
+                        // В простейшем случае можно вернуть саму строку, LLM её поймет
+                        return Mono.just(body);
+                    }
+                })
                 .block();
     }
 
