@@ -1,5 +1,6 @@
 package ru.petrov.odata_bridge.controller;
 
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -13,32 +14,31 @@ public class HelloController {
     private ODataService oDataService;
     private AIService aiService;
     private IndexingService indexingService;
-    //Внедряем на время тестов для проверки поиска с применением RAG
-//    private final ChatClient chatClient;
 
 
     public HelloController(
-//            ChatClient.Builder builder,
             IndexingService indexingService, AIService aiService, ODataService oDataService) {
-//        this.chatClient = builder.build();
         this.indexingService = indexingService;
         this.aiService = aiService;
         this.oDataService = oDataService;
     }
 
-//    @GetMapping("api/status")
-//    public List<Kontragent> checkStatus() {
-//        log.info("Получен запрос на проверку статуса приложения");
-//        return oDataService.fetchTopKontragents(7);
-//    }
 
     @GetMapping("/api/ai")
-    public String askAi(@RequestParam(value = "prompt", defaultValue = "Расскажи анекдот про программиста") String prompt) {
-        log.info("Запрос к ИИ: {}", prompt);
+    public String simpleAsk(@RequestParam(value = "prompt", defaultValue = "Привет.") String prompt) {
+        log.info("Простой запрос к ИИ: {}", prompt);
         return aiService.getOllamaResponse(prompt);
     }
-    @GetMapping("/api/ai/ask")
+    @GetMapping(value = "/api/ai/ask", produces = MediaType.APPLICATION_JSON_VALUE)
     public String smartAsk(@RequestParam String prompt) {
+        // 1. Быстрая проверка на запрос справки
+        String cleanPrompt = prompt.toLowerCase().trim();
+        if (cleanPrompt.matches(".*(помощь|умеешь|справка|таблицы|что делать).*")) {
+            return "### 📚 Доступные данные в 1С:\n" +
+                    indexingService.getAllEntitiesHelp() +
+                    "\n\n*Пример запроса: 'Покажи 5 складов' или 'Сколько в базе контрагентов'*";
+        }
+        // 2. Если не справка — то ответ ИИ
         return aiService.getSmartResponse(prompt);
     }
 
@@ -53,17 +53,4 @@ public class HelloController {
             return "Ошибка при индексации: " + e.getMessage();
         }
     }
-
-//    @GetMapping("/api/ai/test-rag")
-//    public String testRag(@RequestParam String prompt) {
-//        // 1. Извлекаем знания из вашей векторной базы
-//        String context = indexingService.findRelevantMetadata(prompt);
-//        // 2. Отправляем вопрос + контекст в Ollama
-//        return chatClient.prompt()
-//                .system("Ты помощник по 1С. Используй эти данные о структуре базы, чтобы ответить на вопрос:\n" + context)
-//                .user(prompt)
-//                .call()
-//                .content();
-//    }
-
 }

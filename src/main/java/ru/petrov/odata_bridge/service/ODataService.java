@@ -1,8 +1,10 @@
 package ru.petrov.odata_bridge.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
-import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.ExchangeFilterFunction;
@@ -12,7 +14,6 @@ import reactor.core.publisher.Mono;
 import ru.petrov.odata_bridge.config.IndexingConfig;
 import ru.petrov.odata_bridge.config.ODataConfig;
 import ru.petrov.odata_bridge.model.FieldInfo;
-import ru.petrov.odata_bridge.model.ODataResponse;
 
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamConstants;
@@ -22,7 +23,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
-import java.util.Map;
 
 @Service
 public class ODataService {
@@ -55,43 +55,29 @@ public class ODataService {
         });
     }
 
-//    @Tool(description = "Получить топ контрагентов из базы 1С")
-//    public List<Kontragent> fetchTopKontragents(
-//            @ToolParam(description = "Количество записей для получения (по умолчанию 5)") Integer limit) {
-//        int topValue = (limit != null) ? limit : 5;
-//        log.info("Инструмент fetchTopKontragents вызван с лимитом: {}", topValue);
-//
-//        return webClient.get()
-//                .uri("Catalog_Контрагенты?$top=5&$format=json")
-//                .retrieve()
-//                .bodyToMono(new ParameterizedTypeReference<ODataResponse<Kontragent>>() {
-//                })
-//                .map(ODataResponse::getValue)
-//                .block(); // .block() допустим для простого MVP
-//    }
-//
-//    @Tool(description = "Получить топ задач из базы 1С")
-//    public List<UserTask> fetchTasks() {
-//        log.info("Выполнение запроса к 1с для получения топа задач");
-//        return webClient.get()
-//                .uri("Task_ЗадачаИсполнителя?$top=10&$format=json")
-//                .retrieve()
-//                .bodyToMono(new ParameterizedTypeReference<ODataResponse<UserTask>>() {
-//                })
-//                .map(ODataResponse::getValue)
-//                .block();
-//    }
-
-    @Tool(description = "Универсальный запрос к 1С. Параметры (entity, filter) нужно брать из базы знаний метаданных.")
+    /**
+     * Универсальный инструмент (Tool) для выполнения запросов к 1С.
+     * Поддерживает фильтрацию, лимитирование и агрегацию (count).
+     *
+     * @param entity    Имя таблицы 1С.
+     * @param filter    Строка фильтрации в формате OData (опционально).
+     * @param top       Количество возвращаемых записей.
+     * @param countOnly Если true, возвращает только количество записей через /$count.
+     * @return Ответ от 1С в виде строки (JSON или число).
+     */
+    @Tool(
+            name = "executeSmartQuery",
+            returnDirect = true, // результат метода сразу возвращаем пользователю
+            description = "Универсальный запрос к 1С. Параметры (entity, filter) нужно брать из базы знаний метаданных.")
     public Object executeSmartQuery(
             @ToolParam(description = "Имя сущности из метаданных (напр. Catalog_Контрагенты)") String entity,
             @ToolParam(description = "Фильтр OData (напр. ИНН eq '12345' или Number eq '001')") String filter,
             @ToolParam(description = "Лимит записей (по умолчанию 5)") Integer top,
-            @ToolParam(description = "Вернуть только количество (число)") Boolean countOnly
+            @ToolParam(description = "Только если нужен подсчет количества (Boolean)") Boolean countOnly
     ) {
         boolean isCount = Boolean.TRUE.equals(countOnly);
-        log.info("[AI TOOL CALL] Метод: executeSmartQuery | Сущность: {} | Фильтр: {} | Лимит: {}",
-                entity, filter, top);
+        log.info("[AI TOOL CALL] Метод: executeSmartQuery | Сущность: {} | Фильтр: {} | Лимит: {} | count {}",
+                entity, filter, top, countOnly);
         // Определяем лимит
         int limit = (top != null) ? top : 5;
 
@@ -115,13 +101,29 @@ public class ODataService {
                 // Используем ParameterizedTypeReference для десериализации JSON в список Map
                 .bodyToMono(String.class) // Получаем СНАЧАЛА всё как строку (и JSON, и цифру)
                 .flatMap(body -> {
-                    if (isCount) {
-                        // Если это счетчик, просто возвращаем число
-                        return Mono.just(body);
-                    } else {
-                        // Если это JSON, парсим его вручную или через ObjectMapper
-                        // В простейшем случае можно вернуть саму строку, LLM её поймет
-                        return Mono.just(body);
+                    if (isCount) return Mono.just(body);
+
+                    try {
+                        ObjectMapper mapper = new ObjectMapper();
+                        mapper.enable(SerializationFeature.INDENT_OUTPUT);
+
+                        JsonNode root = mapper.readTree(body);
+
+                        // Проверяем наличие ключа "value"
+                        if (root.has("value")) {
+                            JsonNode valueNode = root.get("value");
+                            // Форматируем ТОЛЬКО содержимое массива value
+                            String prettyJson = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(valueNode);
+                            return Mono.just(prettyJson);
+                        }
+
+                        // Если ключа value нет (одиночный объект), форматируем всё, но без лишних полей
+                        String prettyJson = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(root);
+                        return Mono.just(prettyJson);
+
+                    } catch (Exception e) {
+                        log.error("JSON formatting error: {}", e.getMessage());
+                        return Mono.just("```json\n" + body + "\n```");
                     }
                 })
                 .block();
@@ -131,11 +133,6 @@ public class ODataService {
         List<FieldInfo> fields = new ArrayList<>();
 
         // Получаем поток XML от 1С
-//        InputStream is = webClient.get()
-//                .uri("$metadata")
-//                .retrieve()
-//                .bodyToMono(InputStream.class)
-//                .block();
         // В ODataService.parseXmlMetadata()
         InputStream is = webClient.get()
                 .uri("$metadata")

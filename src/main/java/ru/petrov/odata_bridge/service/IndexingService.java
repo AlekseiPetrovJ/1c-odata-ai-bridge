@@ -15,6 +15,9 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
+/**
+ * Сервис управления векторным индексом и контекстным поиском.
+ */
 @Service
 public class IndexingService {
     @Value("${spring.ai.vectorstore.pgvector.table-name}")
@@ -106,5 +109,54 @@ public class IndexingService {
                 .collect(Collectors.joining("\n"));
         log.info("Контекст из DB: {} \n Конец контекста",collect);
         return collect;
+    }
+
+    /**
+     * Этап 1: Поиск наиболее подходящей таблицы по запросу пользователя.
+     * Использует фильтрацию по метаданным (is_header = true) для исключения шума.
+     *
+     * @param query Строка запроса пользователя.
+     * @return Текст мастер-записи найденной сущности.
+     */
+    public String findEntityHeader(String query) {
+        return vectorStore.similaritySearch(
+                        SearchRequest.builder()
+                                .query(query)
+                                .topK(3)
+                                .filterExpression("is_header == true").build()
+                ).stream()
+                .map(doc -> doc.getText() + " [ID: " + doc.getMetadata().get("entity") + "]")
+                .collect(Collectors.joining("\n"));
+    }
+
+    /**
+     * Этап 2: Получение подробной структуры полей для конкретной сущности.
+     * Ограничивает контекст LLM только релевантными полями одной таблицы.
+     *
+     * @param entityName Техническое имя сущности, полученное на первом этапе.
+     * @return Список описаний полей в формате "Имя: Описание".
+     */
+    public String findFieldsForEntity(String entityName) {
+        SearchRequest request = SearchRequest.builder()
+                .query(entityName)
+                .topK(15) // Берем больше полей, но только одной таблицы
+                .filterExpression("entity == '" + entityName + "'")
+                .build();
+        return vectorStore.similaritySearch(request).stream()
+                .map(doc -> doc.getMetadata().get("field") + ": " + doc.getText())
+                .collect(Collectors.joining("\n"));
+    }
+
+    public String getAllEntitiesHelp() {
+        SearchRequest request = SearchRequest.builder()
+                .query("справочники и документы") // Общий запрос
+                .filterExpression("is_header == true") // Только заголовки
+                .topK(20) // Лимит списка
+                .build();
+
+        return vectorStore.similaritySearch(request).stream()
+                .map(doc -> "- " + doc.getText())
+                .distinct()
+                .collect(Collectors.joining("\n"));
     }
 }
