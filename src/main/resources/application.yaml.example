@@ -1,0 +1,81 @@
+spring:
+  application:
+    name: odata-bridge
+  ai:
+    ollama:
+      base-url: http://localhost:11434
+      chat:
+        options:
+          temperature: 0
+          num-ctx: 8192
+          model: llama3.1
+
+    embedding:
+      options:
+        model: mxbai-embed-large # Специальная легкая модель для векторов
+    vectorstore:
+      pgvector:
+        table-name: vector_store
+        dimensions: 1024 # Указываем размерность модели mxbai
+        index-type: HNSW # Современный быстрый индекс
+        distance-type: COSINE_DISTANCE
+        initialize-schema: true
+  datasource:
+    url: jdbc:postgresql://localhost:5432/odata_ai_bridge
+    username: postgres
+    password: password
+logging:
+  file:
+    name: logs/app.log
+  level:
+    root: INFO
+    ru.petrov.odatabridge: DEBUG
+    org.springframework.ai: DEBUG
+    org.springframework.ai.ollama: DEBUG
+    # Позволяет видеть тело HTTP-пакетов WebClient (включая JSON к Ollama)
+    org.springframework.web.reactive.function.client.ExchangeFunctions: TRACE
+    org.springframework.ai.chat.client.advisor: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+app:
+  ai:
+    system-prompt:  |
+        Ты — технический посредник между пользователем и API 1С. #      возвращаемся в выводу простого JSON вместо обработанного LLM ответа.
+          1. Вызови инструмент executeSmartQuery для сущности {targetEntity}.
+          2. Полученный ответ от инструмента (JSON) выведи целиком без изменений.
+          3. Оберни ответ в блок кода: ```json [данные] ```.
+          4. Не добавляй никаких пояснений от себя.
+
+  odata:
+    base-url: https://server.ru/database/odata/standard.odata/
+    username: 'admin' # admin — значение по умолчанию
+    password: 'Password'
+  indexing:
+    #    Объем выборки из БД до фильтрации
+    topK: 5
+    #    Фильтрация
+    #    0.75 — высокая точность (рекомендуется для исключения ложных срабатываний).
+    #    0.5 — расширенный поиск (учитывает частичные смысловые совпадения).
+    similarity-threshold: 0.75
+    batch-size: 100 # Количество документов, отправляемых в Ollama за один раз
+    # Индексировать только таблицы, содержащие эти подстроки
+    include-only:
+      - "Catalog_Организации"
+      - "Catalog_Контрагенты"
+      - "Catalog_Номенклатура"
+    # Исключать таблицы, содержащие эти подстроки
+    exclude-entities:
+      - "_Удалить"
+      - "WebСервис"
+      - "_История"
+      - "_Дополнительные"
+      - "Константа"
+      - "ПрисоединенныеФайлы"
+    # Исключать конкретные системные поля
+    exclude-fields:
+      - "Ref_Key"
+      - "DataVersion"
+      - "Predefined"
+      - "PredefinedDataName"
+      - "DeletionMark"
